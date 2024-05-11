@@ -8,7 +8,6 @@ from swiftbots.all_types import (
     ILogger,
     ILoggerFactory,
     IMessageHandler,
-    IService,
     ITask,
     IView,
 )
