@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 import aiohttp
 
 from swiftbots.all_types import ChatContext, ExitApplicationException, IChatView, IVkontakteView, StartBotException
-from swiftbots.runners import get_all_tasks
+from swiftbots.services.async_runner import get_all_tasks
 
 if TYPE_CHECKING:
     from swiftbots.all_types import IContext, IController, IView

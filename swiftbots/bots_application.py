@@ -11,56 +11,79 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.ext.asyncio.session import async_sessionmaker
 
 from swiftbots.all_types import (
+    IAppRunner,
     IController,
     ILogger,
     ILoggerFactory,
     IMessageHandler,
     ITask,
     IView,
+    NoBotsException,
 )
-from swiftbots.bots import Bot, _instantiate_in_bots
+from swiftbots.bots import Bot
 from swiftbots.loggers import SysIOLoggerFactory
-from swiftbots.runners import run_async
+from swiftbots.service_box import ServiceBuilderBox, ServiceProvider
+from swiftbots.services.async_runner import AsyncRunner
 
 
 class BotsApplication:
-    __logger: ILogger
-    __logger_factory: ILoggerFactory
+    __service_provider: ServiceProvider
     __db_engine: AsyncEngine | None = None
-    __db_session_maker: async_sessionmaker[AsyncSession] | None = None
     __bots: list[Bot]
 
+    def __init__(self, bots: list[Bot]) -> None:
+        self.__bots = bots
+
+    def run(self) -> None:
+        """
+        Start application to listen to all the bots in asynchronous event loop
+        """
+
+        runner = self.__service_provider.get_service(IAppRunner)
+        runner.run(self.__bots)
+
+        # If reached this code, the app is assumed to be closed
+        asyncio.run(self.__close_app())
+
+    async def __close_app(self) -> None:
+        if self.__db_engine is not None:
+            await self.__db_engine.dispose()
+
+
+class BotsApplicationBuilder:
+    service_builder_box: ServiceBuilderBox
+    __logger_factory: ILoggerFactory
+    __db_session_maker: async_sessionmaker[AsyncSession] | None = None
+    __logger: ILogger
+    __bot_factories: list[Callable[[], Bot]]
+    __bot_names: set[str]
+
     def __init__(self, logger_factory: ILoggerFactory | None = None):
-        self.__bots = []
+        self.__bot_factories = []
+        self.__bot_names = set()
+        self.service_builder_box = ServiceBuilderBox()
+
+        # Set all initial services
+        self.service_builder_box.add_service(lambda: AsyncRunner())
         if logger_factory:
             self.use_logger(logger_factory)
         else:
             self.use_logger(SysIOLoggerFactory())
 
-    def use_logger(self, logger_factory: ILoggerFactory) -> None:
-        """
-        Set logger factory and create an instance
-        """
-        assert isinstance(
-            logger_factory, ILoggerFactory
-        ), "Logger factory must be of type ILoggerFactory"
-        assert len(self.__bots) == 0, "Call `use_logger` before to add first bot"
-        self.__logger_factory = logger_factory
-        self.__logger = logger_factory.get_logger()
+    def build(self) -> BotsApplication:
+        """Instantiate all services"""
+        if len(self.__bot_factories) == 0:
+            raise NoBotsException("No bots added")
 
-    def use_database(self, connection_string: str) -> None:
-        """
-        This method must be called before adding bots to an app!
-        Examples of connections string:
-        sqlite+aiosqlite://~/tmp/db.sqlite3,
-        postgresql+asyncpg://nick:password123@localhost/database123,
-        mysql+asyncmy://nick:password123@localhost/database123.
-        It's necessary to use async drivers for database connection.
-        """
-        self.__db_engine = create_async_engine(connection_string, echo=False)
-        self.__db_session_maker = async_sessionmaker(
-            self.__db_engine, expire_on_commit=False
-        )
+        provider = self.service_builder_box.get_provider()
+
+        bots = [bot_factory() for bot_factory in self.__bot_factories]
+
+        self.__set_views(bots, )
+        self.__set_controllers(bots)
+        self.__set_message_handlers(bots)
+
+        return BotsApplication(bots)
 
     def add_bot(
         self,
@@ -72,7 +95,7 @@ class BotsApplication:
         bot_logger_factory: ILoggerFactory | None = None,
     ) -> None:
         """
-        The method adds a bot.
+        Method adds a bot.
         It's required to have at least one controller in a bot.
         And there's required to contain either one view or at least one task (or both).
         :param view_class: Class of view. Must inherit BasicView, ChatView, TelegramView, VkontakteView or another.
@@ -117,11 +140,15 @@ class BotsApplication:
             if view_class:
                 name = view_class.__name__
             else:
-                name = "".join(random.choices(string.ascii_letters, k=8))
+                name = str("".join(random.choices(string.ascii_letters, k=8)))
+
+        assert (
+                name not in self.__bot_names
+        ), f"Bot {name} is defined twice. If you want to use same bots, give them different names"
+        self.__bot_names.add(name)
 
         bot_logger_factory = bot_logger_factory or self.__logger_factory
-        self.__bots.append(
-            Bot(
+        self.__bot_factories.append(lambda: Bot(
                 controller_classes,
                 view_class,
                 task_classes,
@@ -129,36 +156,96 @@ class BotsApplication:
                 bot_logger_factory,
                 name,
                 self.__db_session_maker,
-            )
+            ))
+
+    def use_logger(self, logger_factory: ILoggerFactory) -> None:
+        """
+        Set logger factory and create an instance
+        """
+        assert isinstance(
+            logger_factory, ILoggerFactory
+        ), "Logger factory must be of type ILoggerFactory"
+        assert len(self.__bot_factories) == 0, "Call `use_logger` before to add first bot"
+        self.__logger_factory = logger_factory
+        self.__logger = logger_factory.get_logger()
+
+    def use_database(self, connection_string: str) -> None:
+        """
+        This method must be called before adding bots to an app!
+        Examples of connections string:
+        sqlite+aiosqlite://~/tmp/db.sqlite3,
+        postgresql+asyncpg://nick:password123@localhost/database123,
+        mysql+asyncmy://nick:password123@localhost/database123.
+        It's necessary to use async drivers for database connection.
+        """
+        self.__db_engine = create_async_engine(connection_string, echo=False)
+        self.__db_session_maker = async_sessionmaker(
+            self.__db_engine, expire_on_commit=False
         )
 
-    def run(self, custom_runner: Callable[[list["Bot"]], None] | None = None) -> None:
+    def __set_views(self) -> None:
         """
-        Start application to listen to all the bots in asynchronous event loop
+        Instantiate and set views
         """
-        if len(self.__bots) == 0:
-            self.__logger.critical("No bots used")
-            return
+        for bot in bots:
+            if bot.view_class:
+                bot.view = bot.view_class()
+                bot.view.init(bot, bot.logger, bot.db_session_maker)
 
-        self.__check_bot_repeats()
+    def __set_controllers(self) -> None:
+        """
+        Instantiate and set to the bot controllers, each one must be singleton
+        """
+        controller_memory: list[IController] = []
+        for bot in bots:
+            controllers_to_add: list[IController] = []
+            controller_types = bot.controller_classes
 
-        _instantiate_in_bots(self.__bots)
+            for controller_type in controller_types:
+                found_instances = list(
+                    filter(lambda inst: controller_type is inst, controller_memory)
+                )
+                if len(found_instances) == 1:
+                    controller_instance = found_instances[0]
+                elif len(found_instances) == 0:
+                    controller_instance = controller_type()
+                    controller_instance.init(bot.db_session_maker)
+                    controller_memory.append(controller_instance)
+                else:
+                    raise Exception("Invalid algorithm")
+                controllers_to_add.append(controller_instance)
 
-        if custom_runner is None:
-            asyncio.run(run_async(self.__bots))
-        else:
-            custom_runner(self.__bots)
+            bot.controllers = controllers_to_add
 
-        asyncio.run(self.__close_app())
+    def __set_message_handlers(self) -> None:
+        """
+        Instantiate and set handlers
+        """
+        for bot in bots:
+            if bot.view:
+                if bot.message_handler_class is None:
+                    bot.message_handler_class = bot.view.default_message_handler_class
+                bot.message_handler = bot.message_handler_class(bot.controllers, bot.logger)
 
-    async def __close_app(self) -> None:
-        if self.__db_engine is not None:
-            await self.__db_engine.dispose()
-
-    def __check_bot_repeats(self) -> None:
-        names = set()
-        for bot in self.__bots:
-            assert (
-                bot.name not in names
-            ), f"Bot {bot.name} is defined twice. If you want to use same bots, give them different names"
-            names.add(bot.name)
+    def __set_tasks(self) -> None:
+        """
+        Instantiate and set tasks
+        """
+        task_names: set[str] = set()
+        for bot in bots:
+            if bot.task_classes:
+                task_classes = bot.task_classes
+                tasks = []
+                for task_class in task_classes:
+                    task = task_class()
+                    name: str | None = task.name
+                    if name is None:
+                        name = task_class.__name__
+                        assert name not in task_names, (
+                            f"Duplicate task names {name}. Use "
+                            f"unique `name` property for tasks or unique task class names"
+                        )
+                        task_names.add(name)
+                    task.init(bot.logger, bot.db_session_maker, name)
+                    tasks.append(task)
+                bot.tasks = tasks

@@ -1,13 +1,20 @@
-ERRORS
+ISSUES
 ======
 - Add logs everywhere in views
 - Message from admin sending functions doesn't log if raised.
+- Add disposable interface to IService. And use it with 'with' statement
 
 NEW FEATURES
 ============
 - Make REST api view.
 - Develop tasks/scheduler
 - Make creation of user folder (inject as python command).
+
+CHANGE ARCHITECTURE
+===================
+- Use Dependency injection
+- Replace logger, database connection and other services as dependency for DI
+- Add variables from env/config file/command line arguments
 
 REFACTORING
 ===========

@@ -12,3 +12,15 @@ class ExitBotException(BaseException):
 
 class RestartListeningException(BaseException):
     pass
+
+
+class NotFoundServiceException(Exception):
+    pass
+
+
+class NotSingleServiceException(Exception):
+    pass
+
+
+class NoBotsException(Exception):
+    pass

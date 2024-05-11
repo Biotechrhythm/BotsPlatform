@@ -8,3 +8,5 @@ from swiftbots.all_types._controllers import *
 from swiftbots.all_types._message_handlers import *
 from swiftbots.all_types._tasks import *
 from swiftbots.all_types._views import *
+from swiftbots.all_types._app_runners import *
+from swiftbots.all_types._services import *

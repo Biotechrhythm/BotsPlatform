@@ -4,6 +4,7 @@ from traceback import format_exc
 from swiftbots.all_types import (
     ExitApplicationException,
     ExitBotException,
+    IAppRunner,
     IChatView,
     IContext,
     RestartListeningException,
@@ -14,6 +15,11 @@ from swiftbots.controllers import soft_close_controllers_in_bots_async
 from swiftbots.utils import ErrorRateMonitor
 
 __ALL_TASKS: set[str] = set()
+
+
+class AsyncRunner(IAppRunner):
+    def run(self, bots: list["Bot"]) -> None:
+        asyncio.run(run_async(bots))
 
 
 def get_all_tasks() -> set[str]:

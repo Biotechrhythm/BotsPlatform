@@ -8,6 +8,7 @@ from swiftbots.all_types import (
     ILogger,
     ILoggerFactory,
     IMessageHandler,
+    IService,
     ITask,
     IView,
 )
@@ -56,86 +57,6 @@ class Bot:
         self.__logger = logger_factory.get_logger()
         self.__logger.bot_name = self.name
         self.__db_session_maker = db_session_maker
-
-
-def _set_views(bots: list[Bot]) -> None:
-    """
-    Instantiate and set views
-    """
-    for bot in bots:
-        if bot.view_class:
-            bot.view = bot.view_class()
-            bot.view.init(bot, bot.logger, bot.db_session_maker)
-
-
-def _set_controllers(bots: list[Bot]) -> None:
-    """
-    Instantiate and set to the bot controllers, each one must be singleton
-    """
-    controller_memory: list[IController] = []
-    for bot in bots:
-        controllers_to_add: list[IController] = []
-        controller_types = bot.controller_classes
-
-        for controller_type in controller_types:
-            found_instances = list(
-                filter(lambda inst: controller_type is inst, controller_memory)
-            )
-            if len(found_instances) == 1:
-                controller_instance = found_instances[0]
-            elif len(found_instances) == 0:
-                controller_instance = controller_type()
-                controller_instance.init(bot.db_session_maker)
-                controller_memory.append(controller_instance)
-            else:
-                raise Exception("Invalid algorithm")
-            controllers_to_add.append(controller_instance)
-
-        bot.controllers = controllers_to_add
-
-
-def _set_message_handlers(bots: list[Bot]) -> None:
-    """
-    Instantiate and set handlers
-    """
-    for bot in bots:
-        if bot.view:
-            if bot.message_handler_class is None:
-                bot.message_handler_class = bot.view.default_message_handler_class
-            bot.message_handler = bot.message_handler_class(bot.controllers, bot.logger)
-
-
-def _set_tasks(bots: list[Bot]) -> None:
-    """
-    Instantiate and set tasks
-    """
-    task_names: set[str] = set()
-    for bot in bots:
-        if bot.task_classes:
-            task_classes = bot.task_classes
-            tasks = []
-            for task_class in task_classes:
-                task = task_class()
-                name: str | None = task.name
-                if name is None:
-                    name = task_class.__name__
-                    assert name not in task_names, (
-                        f"Duplicate task names {name}. Use "
-                        f"unique `name` property for tasks or unique task class names"
-                    )
-                    task_names.add(name)
-                task.init(bot.logger, bot.db_session_maker, name)
-                tasks.append(task)
-            bot.tasks = tasks
-
-
-def _instantiate_in_bots(bots: list[Bot]) -> None:
-    """
-    Instantiate and set to the bot instances, each controller must be singleton
-    """
-    _set_views(bots)
-    _set_controllers(bots)
-    _set_message_handlers(bots)
 
 
 async def soft_close_bot_async(bot: Bot) -> None:
